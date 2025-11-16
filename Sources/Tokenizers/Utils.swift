@@ -7,22 +7,25 @@
 //
 
 import Foundation
+#if canImport(CoreFoundation)
+import CoreFoundation
+#endif
 
 struct Utils {
     /// Time a block in ms
     static func time<T>(label: String, _ block: () -> T) -> T {
-        let startTime = CFAbsoluteTimeGetCurrent()
+        let startTime = Self.currentTime()
         let result = block()
-        let diff = (CFAbsoluteTimeGetCurrent() - startTime) * 1_000
+        let diff = (Self.currentTime() - startTime) * 1_000
         print("[\(label)] \(diff)ms")
         return result
     }
 
     /// Time a block in seconds and return (output, time)
     static func time<T>(_ block: () -> T) -> (T, Double) {
-        let startTime = CFAbsoluteTimeGetCurrent()
+        let startTime = Self.currentTime()
         let result = block()
-        let diff = CFAbsoluteTimeGetCurrent() - startTime
+        let diff = Self.currentTime() - startTime
         return (result, diff)
     }
 
@@ -67,6 +70,14 @@ struct Utils {
     /// https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_(Unicode_block)
     static func isChineseChar(_ c: UnicodeScalar) -> Bool {
         (c.value >= 0x4E00 && c.value <= 0x9FFF) || (c.value >= 0x3400 && c.value <= 0x4DBF) || (c.value >= 0x20000 && c.value <= 0x2A6DF) || (c.value >= 0x2A700 && c.value <= 0x2B73F) || (c.value >= 0x2B740 && c.value <= 0x2B81F) || (c.value >= 0x2B820 && c.value <= 0x2CEAF) || (c.value >= 0xF900 && c.value <= 0xFAFF) || (c.value >= 0x2F800 && c.value <= 0x2FA1F)
+    }
+
+    private static func currentTime() -> Double {
+#if canImport(CoreFoundation)
+        CFAbsoluteTimeGetCurrent()
+#else
+        Date().timeIntervalSinceReferenceDate
+#endif
     }
 }
 
