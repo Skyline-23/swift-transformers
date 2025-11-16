@@ -5,10 +5,29 @@
 //  Created by Pedro Cuenca on 20231230.
 //
 
+#if canImport(CryptoKit)
 import CryptoKit
+#elseif canImport(Crypto)
+import Crypto
+#else
+#error("No cryptographic backend is available.")
+#endif
+
 import Foundation
+
+#if canImport(Network)
 import Network
+#endif
+
+#if canImport(os)
 import os
+#else
+private struct Logger {
+    func warning(_ message: String) {
+        print("HubApi warning: \(message)")
+    }
+}
+#endif
 
 /// https://datatracker.ietf.org/doc/html/rfc7540#section-8.1.2
 /// `requests` in Python leaves headers as their original casing,
@@ -822,11 +841,13 @@ extension HubApi {
         public var isExpensive: Bool = false
         public var isConstrained: Bool = false
 
+        #if canImport(Network)
         func update(path: NWPath) {
             isConnected = path.status == .satisfied
             isExpensive = path.isExpensive
             isConstrained = path.isConstrained
         }
+        #endif
 
         func shouldUseOfflineMode() -> Bool {
             if ProcessInfo.processInfo.environment["CI_DISABLE_NETWORK_MONITOR"] == "1" {
@@ -836,6 +857,7 @@ extension HubApi {
         }
     }
 
+    #if canImport(Network)
     private final class NetworkMonitor: Sendable {
         private let monitor: NWPathMonitor
         private let queue: DispatchQueue
@@ -869,6 +891,19 @@ extension HubApi {
             stopMonitoring()
         }
     }
+    #else
+    private final class NetworkMonitor: Sendable {
+        public let state: NetworkStateActor = .init()
+
+        static let shared = NetworkMonitor()
+
+        init() {}
+
+        func startMonitoring() {}
+
+        func stopMonitoring() {}
+    }
+    #endif
 }
 
 /// Convenience methods that use the shared `HubApi` instance
