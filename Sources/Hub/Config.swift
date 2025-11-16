@@ -269,12 +269,8 @@ public struct Config: Hashable, Sendable,
     }
 
     private static func isFloatingPointNumber(_ number: NSNumber) -> Bool {
-#if canImport(CoreFoundation)
-        CFNumberIsFloatType(number as CFNumber)
-#else
         let encoding = String(cString: number.objCType)
         return encoding == "f" || encoding == "d"
-#endif
     }
 
     // MARK: constructors
