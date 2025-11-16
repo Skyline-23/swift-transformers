@@ -6,6 +6,9 @@
 //  See LICENSE at https://github.com/huggingface/swift-coreml-diffusers/LICENSE
 //
 
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Foundation
 
 /// A robust file downloader with support for resumable downloads and progress reporting.

@@ -5,6 +5,9 @@
 //  Created by Piotr Kowalczuk on 06.03.25.
 
 import Foundation
+#if canImport(CoreFoundation)
+import CoreFoundation
+#endif
 import Jinja
 
 // MARK: - Configuration files with dynamic lookup
