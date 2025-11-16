@@ -70,6 +70,7 @@ final class Downloader: NSObject, Sendable {
         self.incompleteDestination = incompleteDestination
         self.chunkSize = chunkSize
 
+        #if canImport(Darwin)
         let sessionIdentifier = "swift-transformers.hub.downloader"
 
         var config = URLSessionConfiguration.default
@@ -79,6 +80,10 @@ final class Downloader: NSObject, Sendable {
             config.sessionSendsLaunchEvents = true
         }
         sessionConfig = config
+        #else
+        _ = inBackground
+        sessionConfig = URLSessionConfiguration.default
+        #endif
     }
 
     /// Starts a download operation and returns a stream of download states.
@@ -134,26 +139,25 @@ final class Downloader: NSObject, Sendable {
         timeout: TimeInterval,
         numRetries: Int
     ) async {
-        let resumeSize = Self.incompleteFileSize(at: incompleteDestination)
-        guard let tasks = await session.get()?.allTasks else {
-            return
-        }
-
-        // If there's an existing pending background task with the same URL, let it proceed.
-        if let existing = tasks.filter({ $0.originalRequest?.url == url }).first {
-            switch existing.state {
-            case .running:
-                return
-            case .suspended:
-                existing.resume()
-                return
-            case .canceling, .completed:
-                existing.cancel()
-                break
-            @unknown default:
-                existing.cancel()
+        #if canImport(Darwin)
+        // If there's a pending background download for the same URL, reuse it instead of creating another.
+        if let urlSession = await session.get() {
+            let tasks = await urlSession.allTasks
+            if let existing = tasks.first(where: { $0.originalRequest?.url == url }) {
+                switch existing.state {
+                case .running:
+                    return
+                case .suspended:
+                    existing.resume()
+                    return
+                case .canceling, .completed:
+                    existing.cancel()
+                @unknown default:
+                    existing.cancel()
+                }
             }
         }
+        #endif
 
         await task.set(
             Task {
@@ -244,8 +248,12 @@ final class Downloader: NSObject, Sendable {
             await newRequest.setValue("bytes=\(downloadResumeState.downloadedSize)-", forHTTPHeaderField: "Range")
         }
 
-        // Start the download and get the byte stream
+        // Start the download and get the response
+#if canImport(Darwin)
         let (asyncBytes, response) = try await session.bytes(for: newRequest)
+#else
+        let (data, response) = try await session.data(for: newRequest)
+#endif
 
         guard let response = response as? HTTPURLResponse else {
             throw DownloadError.unexpectedError
@@ -255,21 +263,21 @@ final class Downloader: NSObject, Sendable {
             throw DownloadError.unexpectedError
         }
 
-        // Create a buffer to collect bytes before writing to disk
-        var buffer = Data(capacity: chunkSize)
-
         // Track speed (bytes per second) using sampling between broadcasts
         var lastSampleTime = Date()
         var totalDownloadedLocal = await downloadResumeState.downloadedSize
         var lastSampleBytes = totalDownloadedLocal
 
         var newNumRetries = numRetries
+#if canImport(Darwin)
+        // Create a buffer to collect bytes before writing to disk.
+        var buffer = Data(capacity: chunkSize)
         do {
             for try await byte in asyncBytes {
                 buffer.append(byte)
-                // When buffer is full, write to disk
                 if buffer.count == chunkSize {
-                    if !buffer.isEmpty { // Filter out keep-alive chunks
+                    if !buffer.isEmpty {
+                        // When the buffer fills up, flush it to disk and update progress.
                         try tempFile.write(contentsOf: buffer)
                         buffer.removeAll(keepingCapacity: true)
 
@@ -279,7 +287,7 @@ final class Downloader: NSObject, Sendable {
                         guard let expectedSize = await downloadResumeState.expectedSize else { continue }
                         let progress = expectedSize != 0 ? Double(totalDownloadedLocal) / Double(expectedSize) : 0
 
-                        // Compute instantaneous speed based on bytes since last broadcast
+                        // Compute instantaneous speed based on bytes since last broadcast.
                         let now = Date()
                         let elapsed = now.timeIntervalSince(lastSampleTime)
                         let deltaBytes = totalDownloadedLocal - lastSampleBytes
@@ -314,6 +322,52 @@ final class Downloader: NSObject, Sendable {
             )
             return
         }
+#else
+        do {
+            var offset = data.startIndex
+            while offset < data.endIndex {
+                let remaining = data.distance(from: offset, to: data.endIndex)
+                let length = min(chunkSize, remaining)
+                let next = data.index(offset, offsetBy: length)
+                let chunk = data[offset..<next]
+                // Mirror the chunked writes we do on Apple platforms.
+                try tempFile.write(contentsOf: Data(chunk))
+
+                totalDownloadedLocal += length
+                await downloadResumeState.incDownloadedSize(length)
+                newNumRetries = 5
+
+                if let expectedSize = await downloadResumeState.expectedSize {
+                    let progress = expectedSize != 0 ? Double(totalDownloadedLocal) / Double(expectedSize) : 0
+
+                    let now = Date()
+                    let elapsed = now.timeIntervalSince(lastSampleTime)
+                    let deltaBytes = totalDownloadedLocal - lastSampleBytes
+                    let speed = elapsed > 0 ? Double(deltaBytes) / elapsed : nil
+                    lastSampleTime = now
+                    lastSampleBytes = totalDownloadedLocal
+
+                    await broadcaster.broadcast(state: .downloading(progress, speed))
+                }
+
+                offset = next
+            }
+        } catch let error as URLError {
+            if newNumRetries <= 0 {
+                throw error
+            }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+
+            await self.session.set(URLSession(configuration: self.sessionConfig, delegate: self, delegateQueue: nil))
+
+            try await httpGet(
+                request: request,
+                tempFile: tempFile,
+                numRetries: newNumRetries - 1
+            )
+            return
+        }
+#endif
 
         // Verify the downloaded file size matches the expected size
         let actualSize = try tempFile.seekToEnd()

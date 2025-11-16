@@ -251,7 +251,7 @@ public struct Config: Hashable, Sendable,
             case let obj as Bool:
                 Config(obj)
             case let obj as NSNumber:
-                if CFNumberIsFloatType(obj) {
+                if Self.isFloatingPointNumber(obj) {
                     Config(obj.floatValue)
                 } else {
                     Config(obj.intValue)
@@ -266,6 +266,15 @@ public struct Config: Hashable, Sendable,
                 fatalError("unknown type: \(type(of: object)) \(object)")
             }
         }
+    }
+
+    private static func isFloatingPointNumber(_ number: NSNumber) -> Bool {
+#if canImport(CoreFoundation)
+        CFNumberIsFloatType(number as CFNumber)
+#else
+        let encoding = String(cString: number.objCType)
+        return encoding == "f" || encoding == "d"
+#endif
     }
 
     // MARK: constructors
