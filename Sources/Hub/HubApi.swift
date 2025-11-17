@@ -32,6 +32,14 @@ private struct Logger {
 }
 #endif
 
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
 /// https://datatracker.ietf.org/doc/html/rfc7540#section-8.1.2
 /// `requests` in Python leaves headers as their original casing,
 /// where as Swift strictly adheres to RFC 7540 and can force lower case.
@@ -1030,8 +1038,61 @@ public extension Hub {
 
 private extension [String] {
     func matching(glob: String) -> [String] {
-        filter { fnmatch(glob, $0, 0) == 0 }
+        filter { matchesGlob($0, pattern: glob) }
     }
+}
+
+// Cross-platform glob matching
+private func matchesGlob(_ string: String, pattern: String) -> Bool {
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
+    // Use fnmatch on Unix-like systems
+    return fnmatch(pattern, string, 0) == 0
+    #else
+    // Fallback implementation for Windows and other platforms
+    return matchesGlobPattern(string, pattern: pattern)
+    #endif
+}
+
+// Simple glob pattern matching for platforms without fnmatch
+private func matchesGlobPattern(_ string: String, pattern: String) -> Bool {
+    var stringIndex = string.startIndex
+    var patternIndex = pattern.startIndex
+    var starIndex: String.Index?
+    var matchIndex: String.Index?
+
+    while stringIndex < string.endIndex {
+        if patternIndex < pattern.endIndex {
+            let patternChar = pattern[patternIndex]
+
+            if patternChar == "*" {
+                starIndex = patternIndex
+                matchIndex = stringIndex
+                patternIndex = pattern.index(after: patternIndex)
+                continue
+            } else if patternChar == "?" || patternChar == string[stringIndex] {
+                stringIndex = string.index(after: stringIndex)
+                patternIndex = pattern.index(after: patternIndex)
+                continue
+            }
+        }
+
+        if let star = starIndex {
+            patternIndex = pattern.index(after: star)
+            if let match = matchIndex {
+                matchIndex = string.index(after: match)
+                stringIndex = matchIndex!
+                continue
+            }
+        }
+
+        return false
+    }
+
+    while patternIndex < pattern.endIndex && pattern[patternIndex] == "*" {
+        patternIndex = pattern.index(after: patternIndex)
+    }
+
+    return patternIndex == pattern.endIndex
 }
 
 private extension FileManager {
