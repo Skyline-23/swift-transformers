@@ -1,6 +1,6 @@
-#if os(Linux) || os(Windows)
+#if os(Linux) || os(Windows) || canImport(Android)
 extension String {
-    /// Minimal shim so Linux builds can compile localized string initializers.
+    /// Minimal shim so non-Apple builds can compile localized string initializers.
     public init(localized value: String, comment: StaticString? = nil) {
         self = value
     }
